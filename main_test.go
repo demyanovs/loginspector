@@ -22,6 +22,7 @@ func TestParseLine(t *testing.T) {
 				expectedTime, _ := time.Parse("02/Jan/2006:15:04:05", "08/Dec/2025:14:23:45")
 				return e.StatusCode == "200" &&
 					e.IP == "192.168.1.1" &&
+					e.Domain == "example.com" &&
 					e.Hour == "14" &&
 					e.Method == "GET" &&
 					e.Path == "/api/users" &&
@@ -503,7 +504,7 @@ func TestTimeFiltering(t *testing.T) {
 				}
 			}
 
-			result, err := analyzeLog(tmpfile, startTime, endTime, nil, false)
+			result, err := analyzeLog(tmpfile, startTime, endTime, nil, false, "", "", "")
 			if err != nil {
 				t.Fatalf("analyzeLog failed: %v", err)
 			}
@@ -833,13 +834,97 @@ func TestStatusFiltering(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := analyzeLog(tmpfile, time.Time{}, time.Time{}, tt.statusFilters, tt.excludeMode)
+			result, err := analyzeLog(tmpfile, time.Time{}, time.Time{}, tt.statusFilters, tt.excludeMode, "", "", "")
 			if err != nil {
 				t.Fatalf("analyzeLog failed: %v", err)
 			}
 
 			if result.TotalRequests != tt.expectedCount {
 				t.Errorf("Expected %d requests, got %d", tt.expectedCount, result.TotalRequests)
+			}
+		})
+	}
+}
+
+// Test FilteredEntries storage and domain parsing
+func TestFilteredEntries(t *testing.T) {
+	testLogs := `[u-0][08/Dec/2025:08:00:00 +0300] 0.1 0.1 200 192.168.1.1 example.com GET /page1 HTTP/1.1 "Mozilla/5.0"
+[u-0][08/Dec/2025:08:00:01 +0300] 0.2 0.2 404 192.168.1.2 test.com GET /missing HTTP/1.1 "Mozilla/5.0"
+[u-0][08/Dec/2025:08:00:02 +0300] 0.3 0.3 500 192.168.1.3 api.example.com POST /error HTTP/1.1 "Mozilla/5.0"`
+
+	tmpfile, err := createTempFile(testLogs)
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer cleanupTempFile(tmpfile)
+
+	tests := []struct {
+		name               string
+		statusFilters      []string
+		excludeMode        bool
+		expectedEntryCount int
+		checkFirstEntry    func(*LogEntry) bool
+	}{
+		{
+			name:               "All entries stored with domains",
+			statusFilters:      nil,
+			excludeMode:        false,
+			expectedEntryCount: 3,
+			checkFirstEntry: func(e *LogEntry) bool {
+				return e.StatusCode == "200" &&
+					e.Domain == "example.com" &&
+					e.IP == "192.168.1.1" &&
+					e.Path == "/page1"
+			},
+		},
+		{
+			name:               "Only 404s stored",
+			statusFilters:      []string{"404"},
+			excludeMode:        false,
+			expectedEntryCount: 1,
+			checkFirstEntry: func(e *LogEntry) bool {
+				return e.StatusCode == "404" &&
+					e.Domain == "test.com" &&
+					e.Path == "/missing"
+			},
+		},
+		{
+			name:               "Exclude 2xx - errors stored",
+			statusFilters:      []string{"2xx"},
+			excludeMode:        true,
+			expectedEntryCount: 2,
+			checkFirstEntry: func(e *LogEntry) bool {
+				return e.StatusCode == "404" && e.Domain == "test.com"
+			},
+		},
+		{
+			name:               "Check domain extraction",
+			statusFilters:      []string{"500"},
+			excludeMode:        false,
+			expectedEntryCount: 1,
+			checkFirstEntry: func(e *LogEntry) bool {
+				return e.Domain == "api.example.com" &&
+					e.Method == "POST" &&
+					e.TotalTime == 0.3
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := analyzeLog(tmpfile, time.Time{}, time.Time{}, tt.statusFilters, tt.excludeMode, "", "", "")
+			if err != nil {
+				t.Fatalf("analyzeLog failed: %v", err)
+			}
+
+			if len(result.FilteredEntries) != tt.expectedEntryCount {
+				t.Errorf("Expected %d filtered entries, got %d", tt.expectedEntryCount, len(result.FilteredEntries))
+			}
+
+			if len(result.FilteredEntries) > 0 && tt.checkFirstEntry != nil {
+				if !tt.checkFirstEntry(&result.FilteredEntries[0]) {
+					t.Errorf("First entry check failed for %+v", result.FilteredEntries[0])
+				}
 			}
 		})
 	}

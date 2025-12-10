@@ -73,10 +73,15 @@ Flags:
   -paths          Most requested URLs
   -time           Hourly request distribution
   -bots           Bot/crawler statistics
+  -suspicious     Suspicious IPs with high error rates
+  -requests       Detailed log entries (all fields)
   -from           Filter logs from this time (format: 08/Dec/2025:08:30:00)
   -to             Filter logs until this time (format: 08/Dec/2025:18:30:00)
   -status-code    Include only these status codes (comma-separated, ranges: 2xx,3xx,4xx,5xx)
   -exclude-status Exclude these status codes (comma-separated, ranges: 2xx,3xx,4xx,5xx)
+  -bot            Filter by bot name (exact match, affects all sections)
+  -user-agent     Filter by user-agent (exact match, affects all sections)
+  -domain         Filter by domain (exact match, affects all sections)
   -limit int      Max items per section (default: varies by section)
 
 Examples:
@@ -89,6 +94,10 @@ Examples:
   loginspector -status-code="4xx,5xx" access.log  # Only errors
   loginspector -exclude-status="2xx" access.log  # All except success
   loginspector -from="..." -status-code="5xx" access.log  # Combine filters
+  loginspector -requests -status-code="404" -limit=10 access.log  # Debug 404 errors
+  loginspector -bot="Googlebot" access.log                        # Only Googlebot (all sections)
+  loginspector -domain="api.example.com" access.log               # Only specific domain
+  loginspector -bot="Googlebot" -status-code="404" access.log     # Googlebot 404s
 ```
 
 ## Output Sections
@@ -137,8 +146,16 @@ Identified bot and crawler traffic breakdown
 - **Shows:** Total count at the end
 - **Use case:** Analyze search engine crawler activity and detect unwanted bots
 
-### **Suspicious IPs** (shown by default)
-Automatically shown when errors exist. Identifies IPs with:
+### **Requests** (`-requests`)
+Detailed view of individual log entries in table format
+- **Shows:** Date/Time, Exec Time, Status, IP, Domain, Method, Path, User-Agent
+- **Default limit:** 50 entries (use `-limit` to override)
+- **Not shown by default** - only with `-requests` flag (use with filters for best results)
+- **Use case:** Debug specific errors, investigate incidents, find request patterns
+- **Works with:** All filters (time ranges, status codes)
+
+### **Suspicious IPs** (`-suspicious`)
+Identifies potentially problematic IPs with:
 - High error counts
 - High error rates (>20% errors with ≥5 requests)
 - Many 403 Forbidden responses
@@ -164,39 +181,107 @@ Currently supports custom log format. Example line:
 ## Output Example
 
 ```
-=========================================
-        LogInspector (v0.1.0)
-=========================================
-Total requests: 60,133
-Unique IPs: 40,562
-Errors (4xx/5xx): 4,880
-Avg response time: 0.872 s
-Bot types: 30
-IPs with errors: 3,348
-=========================================
+╔══════════════════════════════════════════════════════════════════════╗
+║                      🔍  LogInspector  v0.2.0                        ║
+║                 Fast Web Server Access Log Analyzer                  ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  Total requests: 60133            Bot types: 30                      ║
+║  Unique IPs: 40562                IPs with errors: 3348              ║
+║  Errors (4xx/5xx): 4880           Avg response time: 0.872s          ║
+╚══════════════════════════════════════════════════════════════════════╝
 
-========== Top IPs ==========
+══════════════════════════════ Top IPs ═══════════════════════════════
 66.249.69.105                            949 (bot: Googlebot)
 75.97.206.53                             874
 ...
 
-========== Browser Statistics ==========
+═════════════════════════ Browser Statistics ═════════════════════════
 Chrome                          83.02% (43449 requests)
 Firefox                          9.79% (5121 requests)
 Safari                           2.69% (1409 requests)
 ...
 
-========== Device Statistics ==========
+══════════════════════════ Device Statistics ═════════════════════════
 Desktop                         92.79% (48560 requests)
 Mobile                           7.17% (3753 requests)
 Tablet                           0.04% (21 requests)
 
-========== Bots ==========
+═══════════════════════════════ Bots ═════════════════════════════════
 Googlebot                                2769
 VKRobotRB                                995
 YandexBot                                893
 ...
 Total: 7799
+```
+
+## Debugging with -requests
+
+The `-requests` flag shows detailed request logs. Most useful when combined with filters:
+
+### Common Debugging Scenarios
+
+**Find all server errors:**
+```bash
+loginspector -requests -status-code="500" access.log
+```
+
+**Investigate 404s (broken links):**
+```bash
+loginspector -requests -status-code="404" -limit=100 access.log
+```
+
+**Debug errors during specific time:**
+```bash
+loginspector -requests -status-code="5xx" \
+  -from="09/Dec/2025:14:00:00" \
+  -to="09/Dec/2025:14:30:00" \
+  access.log
+```
+
+**See all client errors:**
+```bash
+loginspector -requests -status-code="4xx" access.log
+```
+
+**Audit successful requests in time window:**
+```bash
+loginspector -requests -status-code="2xx" \
+  -from="09/Dec/2025:08:00:00" \
+  -to="09/Dec/2025:09:00:00" \
+  access.log
+```
+
+**Show more details (increase limit):**
+```bash
+loginspector -requests -status-code="500" -limit=200 access.log
+```
+
+### Example Output
+
+```bash
+$ loginspector -requests -status-code="404" -limit=5 access.log
+```
+
+```
+╔══════════════════════════════════════════════════════════════════════╗
+║                      🔍  LogInspector  v0.2.0                        ║
+║                 Fast Web Server Access Log Analyzer                  ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  Total requests: 1323             Bot types: 7                       ║
+║  Unique IPs: 556                  IPs with errors: 556               ║
+║  Errors (4xx/5xx): 1323           Avg response time: 0.604s          ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+════════════════════════════ Requests ════════════════════════════════
+Date/Time        | Exec  | Status | IP              | Domain               | Method | Path                           | User-Agent          
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+09/Dec 00:00:47  | 0.45s | 404    | 192.168.1.100   | www.example.com      | GET    | /static/images/missing.png     | Chrome              
+09/Dec 00:00:47  | 0.45s | 404    | 192.168.1.100   | www.example.com      | GET    | /assets/file-12345.js          | Chrome              
+09/Dec 00:03:43  | 1.99s | 404    | 10.0.45.201     | api.example.com      | GET    | /api/v1/users/nonexistent      | Safari              
+09/Dec 00:05:52  | 0.89s | 404    | 172.16.0.55     | shop.example.com     | GET    | /products/old-item-789         | Firefox             
+09/Dec 00:05:53  | 0.33s | 404    | 172.16.0.55     | shop.example.com     | GET    | /static/logo-old.png           | Firefox             
+
+Showing 5 of 1323 entries (use -limit to show more)
 ```
 
 ## Contributing

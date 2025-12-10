@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const version = "v0.1.0"
+const version = "v0.2.0"
 
 const (
 	DefaultLimitIPs           = 10
@@ -31,6 +31,7 @@ type LogEntry struct {
 	TotalTime   float64
 	StatusCode  string
 	IP          string
+	Domain      string
 	Method      string
 	Path        string
 	UserAgent   string
@@ -54,7 +55,8 @@ type Analysis struct {
 	AvgResponseTime   float64
 	TotalResponseTime float64
 	TimeDistribution  map[string]int
-	UserRequests      int // Non-bot requests
+	UserRequests      int        // Non-bot requests
+	FilteredEntries   []LogEntry // Entries that passed all filters (for -requests output)
 }
 
 var logRegex *regexp.Regexp
@@ -64,7 +66,7 @@ func init() {
 	// Compile regex at startup with error handling
 	var err error
 	logRegex, err = regexp.Compile(
-		`\[.*?\]\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2})\s.*?\]\s+([\d.]+)\s+([\d.]+)\s+(\d{3})\s+([\d.]+)\s+\S+\s+(GET|POST|HEAD|PUT|DELETE)\s+(\S+)\s+HTTP.*?"([^"]*)"`,
+		`\[.*?\]\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2})\s.*?\]\s+([\d.]+)\s+([\d.]+)\s+(\d{3})\s+([\d.]+)\s+(\S+)\s+(GET|POST|HEAD|PUT|DELETE)\s+(\S+)\s+HTTP.*?"([^"]*)"`,
 	)
 	if err != nil {
 		log.Fatalf("Failed to compile log regex: %v", err)
@@ -100,9 +102,10 @@ func parseLine(line string) (*LogEntry, error) {
 		TotalTime:   totalTime,
 		StatusCode:  match[4],
 		IP:          match[5],
-		Method:      match[6],
-		Path:        match[7],
-		UserAgent:   match[8],
+		Domain:      match[6],
+		Method:      match[7],
+		Path:        match[8],
+		UserAgent:   match[9],
 		Hour:        fmt.Sprintf("%02d", timestamp.Hour()),
 		Timestamp:   timestamp,
 	}, nil
@@ -201,7 +204,7 @@ func matchesStatusCode(statusCode string, filters []string) bool {
 // Optional time filtering: pass zero value time.Time for startTime/endTime to disable filtering.
 // Optional status filtering: pass statusFilters slice; excludeMode determines include/exclude behavior.
 // Returns Analysis containing all statistics or an error if file cannot be read.
-func analyzeLog(path string, startTime, endTime time.Time, statusFilters []string, excludeMode bool) (*Analysis, error) {
+func analyzeLog(path string, startTime, endTime time.Time, statusFilters []string, excludeMode bool, botFilter, uaFilter, domainFilter string) (*Analysis, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
@@ -259,6 +262,31 @@ func analyzeLog(path string, startTime, endTime time.Time, statusFilters []strin
 				continue // Include mode: skip if doesn't match
 			}
 		}
+
+		// Apply bot filter (exact match on detected bot name)
+		if botFilter != "" {
+			detectedBot := detectBot(entry.UserAgent)
+			if detectedBot != botFilter {
+				continue
+			}
+		}
+
+		// Apply user-agent filter (exact match)
+		if uaFilter != "" {
+			if entry.UserAgent != uaFilter {
+				continue
+			}
+		}
+
+		// Apply domain filter (exact match)
+		if domainFilter != "" {
+			if entry.Domain != domainFilter {
+				continue
+			}
+		}
+
+		// Store entry for -requests output (after all filtering)
+		a.FilteredEntries = append(a.FilteredEntries, *entry)
 
 		a.TotalRequests++
 		a.TotalResponseTime += entry.TotalTime
@@ -437,7 +465,109 @@ type PrintOptions struct {
 
 // printSectionHeader prints a formatted section header with the given title.
 func printSectionHeader(title string) {
-	fmt.Printf("\n========== %s ==========\n", title)
+	const width = 70
+
+	// Add spaces around title
+	titleWithSpaces := " " + title + " "
+	titleLen := len(titleWithSpaces)
+
+	// If title is too long, just print it
+	if titleLen >= width {
+		fmt.Println("\n" + titleWithSpaces)
+		return
+	}
+
+	// Calculate padding for centered title
+	leftPad := (width - titleLen) / 2
+	rightPad := width - titleLen - leftPad
+
+	// Print centered header with borders
+	fmt.Println("\n" + strings.Repeat("═", leftPad) + titleWithSpaces + strings.Repeat("═", rightPad))
+}
+
+// printRequests displays detailed log entries in a formatted table.
+// Shows date/time, exec time, status, IP, domain, method, path, and user-agent.
+// Applies limit and shows footer with entry counts.
+func printRequests(entries []LogEntry, limit int) {
+	if len(entries) == 0 {
+		fmt.Println("No requests found matching the filters")
+		return
+	}
+
+	// Apply limit (default 50 if not specified)
+	displayLimit := limit
+	if displayLimit == 0 {
+		displayLimit = 50
+	}
+
+	entriesToShow := entries
+	if len(entries) > displayLimit {
+		entriesToShow = entries[:displayLimit]
+	}
+
+	// Print table header
+	fmt.Printf("%-16s | %-5s | %-6s | %-15s | %-20s | %-6s | %-30s | %-20s\n",
+		"Date/Time", "Exec", "Status", "IP", "Domain", "Method", "Path", "User-Agent")
+	fmt.Println(strings.Repeat("─", 145))
+
+	// Print entries
+	for _, entry := range entriesToShow {
+		// Format timestamp
+		dateTime := entry.Timestamp.Format("02/Jan 15:04:05")
+
+		// Format exec time
+		execTime := fmt.Sprintf("%.2fs", entry.TotalTime)
+
+		// Truncate domain if too long
+		domain := entry.Domain
+		if len(domain) > 20 {
+			domain = domain[:17] + "..."
+		}
+
+		// Truncate path if too long
+		path := entry.Path
+		if len(path) > 30 {
+			path = path[:27] + "..."
+		}
+
+		// Detect browser/bot from user agent
+		userAgent := "Unknown"
+		if entry.UserAgent != "" {
+			if isBot(entry.UserAgent) {
+				botName := detectBot(entry.UserAgent)
+				if botName != "" {
+					userAgent = botName
+				} else {
+					userAgent = "Bot"
+				}
+			} else {
+				browser := detectBrowser(entry.UserAgent)
+				if browser != "Unknown" {
+					userAgent = browser
+				} else {
+					// Show first 20 chars of UA
+					userAgent = entry.UserAgent
+					if len(userAgent) > 20 {
+						userAgent = userAgent[:17] + "..."
+					}
+				}
+			}
+		}
+		if len(userAgent) > 20 {
+			userAgent = userAgent[:17] + "..."
+		}
+
+		fmt.Printf("%-16s | %-5s | %-6s | %-15s | %-20s | %-6s | %-30s | %-20s\n",
+			dateTime, execTime, entry.StatusCode, entry.IP, domain,
+			entry.Method, path, userAgent)
+	}
+
+	// Print footer
+	if len(entries) > displayLimit {
+		fmt.Printf("\nShowing %d of %d entries (use -limit to show more)\n", displayLimit, len(entries))
+	} else {
+		fmt.Printf("\nShowing all %d entries\n", len(entries))
+	}
 }
 
 // printSorted prints statistics in sorted order with optional features.
@@ -617,6 +747,61 @@ func printSuspiciousIPs(errorsByIP, forbiddenByIP, byIP map[string]int, botInfo 
 	}
 }
 
+// printBanner displays the application banner with the given version.
+// printBannerWithStats displays a unified banner with statistics in one elegant table.
+// Combines the application header and summary statistics with a separator.
+func printBannerWithStats(version string, a *Analysis) {
+	const width = 70
+
+	// Helper function to center text with padding on both sides
+	center := func(text string, width int) string {
+		textLen := len(text)
+		if textLen >= width {
+			return text[:width]
+		}
+		leftPad := (width - textLen) / 2
+		rightPad := width - textLen - leftPad
+		return strings.Repeat(" ", leftPad) + text + strings.Repeat(" ", rightPad)
+	}
+
+	// Top border
+	fmt.Println("╔" + strings.Repeat("═", width) + "╗")
+
+	// Title line (with emoji width compensation)
+	// Emoji 🔍 is 4 bytes but displays as ~2 visual characters
+	title := "🔍  LogInspector  " + version
+	titleCentered := center(title, width)
+	// Add 2 extra spaces to compensate for emoji visual width
+	fmt.Println("║" + titleCentered + "  ║")
+
+	// Subtitle line
+	subtitle := "Fast Web Server Access Log Analyzer"
+	fmt.Println("║" + center(subtitle, width) + "║")
+
+	// Middle separator
+	fmt.Println("╠" + strings.Repeat("═", width) + "╣")
+
+	// Statistics in two columns (width - 2 for borders = 68 chars available)
+	// Both columns left-aligned: 35 chars each
+	leftCol1 := fmt.Sprintf("  Total requests: %d", a.TotalRequests)
+	rightCol1 := fmt.Sprintf("Bot types: %d", len(a.Bots))
+	fmt.Printf("║%-35s%-35s║\n", leftCol1, rightCol1)
+
+	leftCol2 := fmt.Sprintf("  Unique IPs: %d", len(a.ByIP))
+	rightCol2 := ""
+	if len(a.ErrorsByIP) > 0 {
+		rightCol2 = fmt.Sprintf("IPs with errors: %d", len(a.ErrorsByIP))
+	}
+	fmt.Printf("║%-35s%-35s║\n", leftCol2, rightCol2)
+
+	leftCol3 := fmt.Sprintf("  Errors (4xx/5xx): %d", len(a.Errors))
+	rightCol3 := fmt.Sprintf("Avg response time: %.3fs", a.AvgResponseTime)
+	fmt.Printf("║%-35s%-35s║\n", leftCol3, rightCol3)
+
+	// Bottom border
+	fmt.Println("╚" + strings.Repeat("═", width) + "╝")
+}
+
 // main is the entry point of the application.
 // It parses command-line flags, analyzes the log file, and displays requested statistics.
 func main() {
@@ -629,6 +814,8 @@ func main() {
 	showPaths := flag.Bool("paths", false, "Paths - Most requested URLs on your site (query params stripped)")
 	showTime := flag.Bool("time", false, "Time Distribution - Request activity by hour (shows traffic patterns throughout the day)")
 	showBots := flag.Bool("bots", false, "Bots - Identified bot/crawler traffic breakdown (Total shows all bot requests)")
+	showSuspicious := flag.Bool("suspicious", false, "Suspicious IPs - IPs with high error rates")
+	showRequests := flag.Bool("requests", false, "Requests - Detailed log entries (all fields)")
 	// Limit flag
 	limit := flag.Int("limit", 0, "Override default limits - maximum number of items to show per section")
 	// Time range filters
@@ -638,12 +825,17 @@ func main() {
 	statusCode := flag.String("status-code", "", "Include only these status code(s) - comma-separated, supports ranges (e.g., \"200,4xx,500\")")
 	excludeStatus := flag.String("exclude-status", "", "Exclude these status code(s) - comma-separated, supports ranges (e.g., \"301,3xx\")")
 
+	// Global filters (apply to all sections and statistics)
+	filterBot := flag.String("bot", "", "Filter by bot name (exact match)")
+	filterUserAgent := flag.String("user-agent", "", "Filter by user-agent (exact match)")
+	filterDomain := flag.String("domain", "", "Filter by domain (exact match)")
+
 	flag.Parse()
 
 	// Check if any section flag was explicitly set
-	explicitMode := *showIPs || *showStatus || *showBrowser || *showDevice || *showOS || *showPaths || *showTime || *showBots
+	explicitMode := *showIPs || *showStatus || *showBrowser || *showDevice || *showOS || *showPaths || *showTime || *showBots || *showSuspicious || *showRequests
 
-	// If no flags specified, enable all sections (default behavior)
+	// If no flags specified, enable all sections EXCEPT requests (default behavior)
 	if !explicitMode {
 		*showIPs = true
 		*showStatus = true
@@ -653,6 +845,8 @@ func main() {
 		*showPaths = true
 		*showTime = true
 		*showBots = true
+		*showSuspicious = true
+		// *showRequests stays false - only with explicit flag
 	}
 
 	// Default limits per section (if -limit not specified)
@@ -681,16 +875,21 @@ func main() {
 		fmt.Println("  -paths      Paths - Most requested URLs on your site")
 		fmt.Println("  -time       Time Distribution - Request activity by hour")
 		fmt.Println("  -bots       Bots - Identified bot/crawler traffic breakdown")
-		fmt.Println("  suspicious  Suspicious IPs - IPs with high error rates (shown by default)")
-		fmt.Println("\nOther flags:")
-		fmt.Printf("  -limit int  Override default limits (IPs:%d, Status:%d, Paths:%d, Bots:%d)\n",
-			DefaultLimitIPs, DefaultLimitStatus, DefaultLimitPaths, DefaultLimitBots)
-		fmt.Println("  -from         Filter logs from this time (format: 08/Dec/2025:08:30:00)")
-		fmt.Println("  -to           Filter logs until this time (format: 08/Dec/2025:18:30:00)")
-		fmt.Println("  -status-code  Include only these status codes (comma-separated, ranges: 2xx,3xx,4xx,5xx)")
+		fmt.Println("  -suspicious Suspicious IPs - IPs with high error rates")
+		fmt.Println("  -requests   Requests - Detailed log entries (all fields)")
+		fmt.Println("\nFilters (apply to all sections and statistics):")
+		fmt.Println("  -from           Filter logs from this time (format: 08/Dec/2025:08:30:00)")
+		fmt.Println("  -to             Filter logs until this time (format: 08/Dec/2025:18:30:00)")
+		fmt.Println("  -status-code    Include only these status codes (comma-separated, ranges: 2xx,3xx,4xx,5xx)")
 		fmt.Println("  -exclude-status Exclude these status codes (comma-separated, ranges: 2xx,3xx,4xx,5xx)")
+		fmt.Println("  -bot            Filter by bot name - exact match (e.g., \"Googlebot\")")
+		fmt.Println("  -user-agent     Filter by user-agent string - exact match")
+		fmt.Println("  -domain         Filter by domain - exact match (e.g., \"www.example.com\")")
+		fmt.Println("\nOther flags:")
+		fmt.Printf("  -limit int      Override default limits (IPs:%d, Status:%d, Paths:%d, Bots:%d)\n",
+			DefaultLimitIPs, DefaultLimitStatus, DefaultLimitPaths, DefaultLimitBots)
 		fmt.Println("\nExamples:")
-		fmt.Println("  loginspector access.log              # Show all sections + suspicious IPs")
+		fmt.Println("  loginspector access.log              # Show all sections")
 		fmt.Println("  loginspector -bots access.log        # Show only bots")
 		fmt.Println("  loginspector -bots -ips access.log   # Show only bots and IPs")
 		fmt.Println("  loginspector -bots -limit=50 access.log")
@@ -700,9 +899,9 @@ func main() {
 		fmt.Println("  loginspector -status-code=\"4xx,5xx\" access.log        # Only errors")
 		fmt.Println("  loginspector -exclude-status=\"2xx\" access.log         # All except success")
 		fmt.Println("  loginspector -from=\"...\" -status-code=\"5xx\" access.log  # Combine filters")
-		fmt.Println("\nNote: Suspicious IPs section (IPs with errors) is shown by default if errors exist")
-		fmt.Println("\nEnvironment variables:")
-		fmt.Println("  DEBUG=1     Enable verbose logging (unknown bots, etc.)")
+		fmt.Println("  loginspector -bot=\"Googlebot\" access.log                 # Only Googlebot traffic")
+		fmt.Println("  loginspector -domain=\"api.example.com\" access.log        # Only specific domain")
+		fmt.Println("  loginspector -bot=\"Googlebot\" -status-code=\"404\" access.log  # Googlebot 404s")
 		return
 	}
 
@@ -752,23 +951,12 @@ func main() {
 		excludeStatusMode = true
 	}
 
-	a, err := analyzeLog(flag.Arg(0), startTime, endTime, statusFilters, excludeStatusMode)
+	a, err := analyzeLog(flag.Arg(0), startTime, endTime, statusFilters, excludeStatusMode, *filterBot, *filterUserAgent, *filterDomain)
 	if err != nil {
 		log.Fatalf("Error analyzing log: %v", err)
 	}
 
-	fmt.Println("=========================================")
-	fmt.Printf("        LogInspector (%s)\n", version)
-	fmt.Println("=========================================")
-	fmt.Printf("Total requests: %d\n", a.TotalRequests)
-	fmt.Printf("Unique IPs: %d\n", len(a.ByIP))
-	fmt.Printf("Errors (4xx/5xx): %d\n", len(a.Errors))
-	fmt.Printf("Avg response time: %.3f s\n", a.AvgResponseTime)
-	fmt.Printf("Bot types: %d\n", len(a.Bots))
-	if len(a.ErrorsByIP) > 0 {
-		fmt.Printf("IPs with errors: %d\n", len(a.ErrorsByIP))
-	}
-	fmt.Println("=========================================")
+	printBannerWithStats(version, a)
 
 	if *showIPs {
 		printSorted(PrintOptions{
@@ -838,8 +1026,17 @@ func main() {
 		})
 	}
 
+	if *showRequests {
+		printSectionHeader("Requests")
+		effectiveLimit := *limit
+		if effectiveLimit == 0 {
+			effectiveLimit = 50
+		}
+		printRequests(a.FilteredEntries, effectiveLimit)
+	}
+
 	// Show Suspicious IPs only in non-explicit mode (when no section flags specified)
-	if !explicitMode && len(a.ErrorsByIP) > 0 {
+	if *showSuspicious && len(a.ErrorsByIP) > 0 {
 		printSuspiciousIPs(a.ErrorsByIP, a.ForbiddenByIP, a.ByIP, a.IPBotInfo)
 	}
 }
