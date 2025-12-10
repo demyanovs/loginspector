@@ -204,7 +204,7 @@ func matchesStatusCode(statusCode string, filters []string) bool {
 // Optional time filtering: pass zero value time.Time for startTime/endTime to disable filtering.
 // Optional status filtering: pass statusFilters slice; excludeMode determines include/exclude behavior.
 // Returns Analysis containing all statistics or an error if file cannot be read.
-func analyzeLog(path string, startTime, endTime time.Time, statusFilters []string, excludeMode bool, botFilter, uaFilter, domainFilter string) (*Analysis, error) {
+func analyzeLog(path string, startTime, endTime time.Time, statusFilters []string, excludeMode bool, botFilter, uaFilter, domainFilter, methodFilter, ipFilter string) (*Analysis, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
@@ -227,6 +227,18 @@ func analyzeLog(path string, startTime, endTime time.Time, statusFilters []strin
 		ErrorsByIP:       map[string]int{},
 		ForbiddenByIP:    map[string]int{},
 		TimeDistribution: map[string]int{},
+	}
+
+	// Parse IP filter (comma-separated list)
+	ipMap := make(map[string]bool)
+	if ipFilter != "" {
+		ips := strings.Split(ipFilter, ",")
+		for _, ip := range ips {
+			trimmed := strings.TrimSpace(ip)
+			if trimmed != "" {
+				ipMap[trimmed] = true
+			}
+		}
 	}
 
 	// Buffered scanner with larger buffer for big files
@@ -281,6 +293,20 @@ func analyzeLog(path string, startTime, endTime time.Time, statusFilters []strin
 		// Apply domain filter (exact match)
 		if domainFilter != "" {
 			if entry.Domain != domainFilter {
+				continue
+			}
+		}
+
+		// Apply method filter (exact match, case-insensitive)
+		if methodFilter != "" {
+			if !strings.EqualFold(entry.Method, methodFilter) {
+				continue
+			}
+		}
+
+		// Apply IP filter (exact match)
+		if len(ipMap) > 0 {
+			if !ipMap[entry.IP] {
 				continue
 			}
 		}
@@ -628,19 +654,43 @@ func printTimeDistribution(title string, m map[string]int) {
 
 	// Create array for all 24 hours
 	hours := make([]int, HoursInDay)
+	maxCount := 0
 	for hourStr, count := range m {
 		hour, err := strconv.Atoi(hourStr)
 		if err != nil || hour < 0 || hour >= HoursInDay {
 			continue
 		}
 		hours[hour] = count
+		if count > maxCount {
+			maxCount = count
+		}
 	}
 
-	// Print hourly distribution
+	// Bar chart configuration
+	const barWidth = 10 // Number of characters for the bar
+
+	// Print hourly distribution with visual bars
 	for i := 0; i < HoursInDay; i++ {
 		nextHour := (i + 1) % HoursInDay
 		timeRange := fmt.Sprintf("%02d:00 - %02d:00", i, nextHour)
-		fmt.Printf("%-20s %d\n", timeRange, hours[i])
+
+		// Calculate bar length (0-10 based on maxCount)
+		var barLength int
+		if maxCount > 0 {
+			barLength = (hours[i] * barWidth) / maxCount
+		}
+
+		// Build visual bar using block characters
+		bar := ""
+		for j := 0; j < barWidth; j++ {
+			if j < barLength {
+				bar += "▓"
+			} else {
+				bar += "░"
+			}
+		}
+
+		fmt.Printf("%-17s %s %d\n", timeRange, bar, hours[i])
 	}
 }
 
@@ -829,6 +879,8 @@ func main() {
 	filterBot := flag.String("bot", "", "Filter by bot name (exact match)")
 	filterUserAgent := flag.String("user-agent", "", "Filter by user-agent (exact match)")
 	filterDomain := flag.String("domain", "", "Filter by domain (exact match)")
+	filterMethod := flag.String("method", "", "Filter by HTTP method (exact match, e.g., \"GET\", \"POST\")")
+	filterIP := flag.String("ip", "", "Filter by IP address(es) - comma-separated for multiple (exact match, e.g., \"192.168.1.1\" or \"192.168.1.1,10.0.0.1\")")
 
 	flag.Parse()
 
@@ -885,6 +937,8 @@ func main() {
 		fmt.Println("  -bot            Filter by bot name - exact match (e.g., \"Googlebot\")")
 		fmt.Println("  -user-agent     Filter by user-agent string - exact match")
 		fmt.Println("  -domain         Filter by domain - exact match (e.g., \"www.example.com\")")
+		fmt.Println("  -method         Filter by HTTP method - exact match (e.g., \"GET\", \"POST\")")
+		fmt.Println("  -ip             Filter by IP address(es) - comma-separated for multiple, exact match (e.g., \"192.168.1.1\" or \"192.168.1.1,10.0.0.1\")")
 		fmt.Println("\nOther flags:")
 		fmt.Printf("  -limit int      Override default limits (IPs:%d, Status:%d, Paths:%d, Bots:%d)\n",
 			DefaultLimitIPs, DefaultLimitStatus, DefaultLimitPaths, DefaultLimitBots)
@@ -902,6 +956,9 @@ func main() {
 		fmt.Println("  loginspector -bot=\"Googlebot\" access.log                 # Only Googlebot traffic")
 		fmt.Println("  loginspector -domain=\"api.example.com\" access.log        # Only specific domain")
 		fmt.Println("  loginspector -bot=\"Googlebot\" -status-code=\"404\" access.log  # Googlebot 404s")
+		fmt.Println("  loginspector -ip=\"192.168.1.1\" access.log                     # Only specific IP")
+		fmt.Println("  loginspector -ip=\"192.168.1.1,10.0.0.1\" access.log            # Multiple IPs")
+		fmt.Println("  loginspector -ip=\"66.249.69.105\" -status-code=\"404\" access.log  # IP with 404s")
 		return
 	}
 
@@ -951,7 +1008,7 @@ func main() {
 		excludeStatusMode = true
 	}
 
-	a, err := analyzeLog(flag.Arg(0), startTime, endTime, statusFilters, excludeStatusMode, *filterBot, *filterUserAgent, *filterDomain)
+	a, err := analyzeLog(flag.Arg(0), startTime, endTime, statusFilters, excludeStatusMode, *filterBot, *filterUserAgent, *filterDomain, *filterMethod, *filterIP)
 	if err != nil {
 		log.Fatalf("Error analyzing log: %v", err)
 	}

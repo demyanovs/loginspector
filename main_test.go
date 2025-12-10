@@ -504,7 +504,7 @@ func TestTimeFiltering(t *testing.T) {
 				}
 			}
 
-			result, err := analyzeLog(tmpfile, startTime, endTime, nil, false, "", "", "")
+			result, err := analyzeLog(tmpfile, startTime, endTime, nil, false, "", "", "", "")
 			if err != nil {
 				t.Fatalf("analyzeLog failed: %v", err)
 			}
@@ -834,7 +834,7 @@ func TestStatusFiltering(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := analyzeLog(tmpfile, time.Time{}, time.Time{}, tt.statusFilters, tt.excludeMode, "", "", "")
+			result, err := analyzeLog(tmpfile, time.Time{}, time.Time{}, tt.statusFilters, tt.excludeMode, "", "", "", "")
 			if err != nil {
 				t.Fatalf("analyzeLog failed: %v", err)
 			}
@@ -912,7 +912,7 @@ func TestFilteredEntries(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := analyzeLog(tmpfile, time.Time{}, time.Time{}, tt.statusFilters, tt.excludeMode, "", "", "")
+			result, err := analyzeLog(tmpfile, time.Time{}, time.Time{}, tt.statusFilters, tt.excludeMode, "", "", "", "")
 			if err != nil {
 				t.Fatalf("analyzeLog failed: %v", err)
 			}
