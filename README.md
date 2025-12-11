@@ -7,7 +7,7 @@ Fast and powerful web server access log inspector.
 ## Features
 
 - Fast parsing of large log files (buffered I/O)
-- Comprehensive statistics (IPs, browsers, devices, OS, bots)
+- Comprehensive statistics (IPs, browsers, devices, OS, bots, etc.)
 - Flexible filtering (time ranges, IPs, status codes, etc.)
 - Advanced bot detection
 - Time distribution analysis
@@ -79,37 +79,41 @@ Sections (without flags all sections shown, with flags only specified ones):
   -requests   Requests - Detailed log entries (all fields)
 
 Filters (apply to all sections and statistics):
-  -from           Filter logs from this time (format: 08/Dec/2025:08:30:00)
-  -to             Filter logs until this time (format: 08/Dec/2025:18:30:00)
-  -status-code    Include only these status codes (comma-separated, ranges: 2xx,3xx,4xx,5xx)
-  -exclude-status Exclude these status codes (comma-separated, ranges: 2xx,3xx,4xx,5xx)
-  -bot            Filter by bot name - exact match (e.g., "Googlebot")
-  -user-agent     Filter by user-agent string - exact match
-  -domain         Filter by domain - exact match (e.g., "www.example.com")
-  -method         Filter by HTTP method - exact match (e.g., "GET", "POST")
-  -ip             Filter by IP address(es) - comma-separated for multiple, exact match (e.g., "192.168.1.1" or "192.168.1.1,10.0.0.1")
+  -from             Filter logs from this time (format: 08/Dec/2025:08:30:00)
+  -to               Filter logs until this time (format: 08/Dec/2025:18:30:00)
+  -status-code      Include only these status codes (comma-separated, ranges: 2xx,3xx,4xx,5xx)
+  -exclude-status   Exclude these status codes (comma-separated, ranges: 2xx,3xx,4xx,5xx)
+  -bot              Filter by bot name(s) - comma-separated for multiple (e.g., "Googlebot,YandexBot")
+  -exclude-bot      Exclude bot name(s) - comma-separated for multiple (e.g., "Googlebot,YandexBot")
+  -method           Filter by HTTP method(s) - comma-separated for multiple (e.g., "GET,POST")
+  -exclude-method   Exclude HTTP method(s) - comma-separated for multiple (e.g., "HEAD,OPTIONS")
+  -ip               Filter by IP address(es) - comma-separated for multiple (e.g., "192.168.1.1,10.0.0.1")
+  -exclude-ip       Exclude IP address(es) - comma-separated for multiple (e.g., "127.0.0.1,::1")
+  -user-agent       Filter by user-agent(s) - comma-separated for multiple (exact match)
+  -exclude-user-agent Exclude user-agent(s) - comma-separated for multiple (exact match)
+  -domain           Filter by domain - exact match (e.g., "www.example.com")
 
 Other flags:
   -limit int      Override default limits (IPs:10, Status:10, Paths:10, Bots:10)
 
 Examples:
   loginspector access.log              # Show all sections
+  loginspector -requests -from="08/Dec/2025:08:00:00" -to="08/Dec/2025:18:00:00" access.log # Show detailed requests in time range
   loginspector -bots access.log        # Show only bots
   loginspector -bots -ips access.log   # Show only bots and IPs
   loginspector -bots -limit=50 access.log
-  loginspector -from="08/Dec/2025:08:00:00" -to="08/Dec/2025:18:00:00" access.log
   loginspector -from="07/Dec/2025:12:00:00" access.log  # From specific time onwards
   loginspector -status-code="200" access.log             # Only 200 OK responses
   loginspector -status-code="4xx,5xx" access.log        # Only errors
   loginspector -exclude-status="2xx" access.log         # All except success
   loginspector -from="..." -status-code="5xx" access.log  # Combine filters
   loginspector -bot="Googlebot" access.log                 # Only Googlebot traffic
-  loginspector -domain="api.example.com" access.log        # Only specific domain
-  loginspector -method="POST" access.log                   # Only POST requests
-  loginspector -bot="Googlebot" -status-code="404" access.log  # Googlebot 404s
-  loginspector -ip="192.168.1.1" access.log                     # Only specific IP
-  loginspector -ip="192.168.1.1,10.0.0.1" access.log            # Multiple IPs
-  loginspector -ip="66.249.69.105" -status-code="404" access.log  # IP with 404s
+  loginspector -exclude-bot="Googlebot,YandexBot" access.log  # Exclude specific bots
+  loginspector -method="GET,POST" access.log               # Only GET and POST
+  loginspector -exclude-method="HEAD,OPTIONS" access.log   # Exclude HEAD and OPTIONS
+  loginspector -ip="192.168.1.1,10.0.0.1" access.log       # Multiple IPs
+  loginspector -exclude-ip="127.0.0.1" access.log          # Exclude localhost
+  loginspector -bot="Googlebot,YandexBot" -exclude-ip="127.0.0.1" -method="GET,POST" access.log
 ```
 
 ## Output Sections
@@ -194,7 +198,7 @@ Currently supports custom log format. Example line:
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
-║                      🔍  LogInspector  v0.2.0                        ║
+║                      🔍  LogInspector  v0.3.0                        ║
 ║                 Fast Web Server Access Log Analyzer                  ║
 ╠══════════════════════════════════════════════════════════════════════╣
 ║  Total requests: 60133            Bot types: 30                      ║
@@ -322,7 +326,7 @@ $ loginspector -requests -status-code="404" -limit=5 access.log
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
-║                      🔍  LogInspector  v0.2.0                        ║
+║                      🔍  LogInspector  v0.3.0                        ║
 ║                 Fast Web Server Access Log Analyzer                  ║
 ╠══════════════════════════════════════════════════════════════════════╣
 ║  Total requests: 1323             Bot types: 7                       ║
@@ -332,7 +336,7 @@ $ loginspector -requests -status-code="404" -limit=5 access.log
 
 ════════════════════════════ Requests ════════════════════════════════
 Date/Time        | Exec  | Status | IP              | Domain               | Method | Path                           | User-Agent          
-─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 09/Dec 00:00:47  | 0.45s | 404    | 192.168.1.100   | www.example.com      | GET    | /static/images/missing.png     | Chrome              
 09/Dec 00:00:47  | 0.45s | 404    | 192.168.1.100   | www.example.com      | GET    | /assets/file-12345.js          | Chrome              
 09/Dec 00:03:43  | 1.99s | 404    | 10.0.45.201     | api.example.com      | GET    | /api/v1/users/nonexistent      | Safari              
@@ -346,6 +350,9 @@ Showing 5 of 1323 entries (use -limit to show more)
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
 
 Please make sure to update tests as appropriate.
+
+## Changelog
+See [CHANGELOG.md](./CHANGELOG.md) for a list of changes and version history.
 
 ## License
 [MIT](LICENSE.md)
