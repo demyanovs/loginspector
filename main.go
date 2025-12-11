@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const version = "v0.2.0"
+const version = "v0.3.0"
 
 const (
 	DefaultLimitIPs           = 10
@@ -204,7 +204,7 @@ func matchesStatusCode(statusCode string, filters []string) bool {
 // Optional time filtering: pass zero value time.Time for startTime/endTime to disable filtering.
 // Optional status filtering: pass statusFilters slice; excludeMode determines include/exclude behavior.
 // Returns Analysis containing all statistics or an error if file cannot be read.
-func analyzeLog(path string, startTime, endTime time.Time, statusFilters []string, excludeMode bool, botFilter, uaFilter, domainFilter, methodFilter, ipFilter string) (*Analysis, error) {
+func analyzeLog(path string, startTime, endTime time.Time, statusFilters []string, excludeMode bool, botFilter, excludeBotFilter, uaFilter, excludeUAFilter, domainFilter, methodFilter, excludeMethodFilter, ipFilter, excludeIPFilter string) (*Analysis, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
@@ -229,6 +229,78 @@ func analyzeLog(path string, startTime, endTime time.Time, statusFilters []strin
 		TimeDistribution: map[string]int{},
 	}
 
+	// Parse bot filter (comma-separated list)
+	botMap := make(map[string]bool)
+	if botFilter != "" {
+		bots := strings.Split(botFilter, ",")
+		for _, bot := range bots {
+			trimmed := strings.TrimSpace(bot)
+			if trimmed != "" {
+				botMap[trimmed] = true
+			}
+		}
+	}
+
+	// Parse exclude bot filter (comma-separated list)
+	excludeBotMap := make(map[string]bool)
+	if excludeBotFilter != "" {
+		bots := strings.Split(excludeBotFilter, ",")
+		for _, bot := range bots {
+			trimmed := strings.TrimSpace(bot)
+			if trimmed != "" {
+				excludeBotMap[trimmed] = true
+			}
+		}
+	}
+
+	// Parse user-agent filter (comma-separated list)
+	uaMap := make(map[string]bool)
+	if uaFilter != "" {
+		uas := strings.Split(uaFilter, ",")
+		for _, ua := range uas {
+			trimmed := strings.TrimSpace(ua)
+			if trimmed != "" {
+				uaMap[trimmed] = true
+			}
+		}
+	}
+
+	// Parse exclude user-agent filter (comma-separated list)
+	excludeUAMap := make(map[string]bool)
+	if excludeUAFilter != "" {
+		uas := strings.Split(excludeUAFilter, ",")
+		for _, ua := range uas {
+			trimmed := strings.TrimSpace(ua)
+			if trimmed != "" {
+				excludeUAMap[trimmed] = true
+			}
+		}
+	}
+
+	// Parse method filter (comma-separated list)
+	methodMap := make(map[string]bool)
+	if methodFilter != "" {
+		methods := strings.Split(methodFilter, ",")
+		for _, method := range methods {
+			trimmed := strings.TrimSpace(strings.ToUpper(method))
+			if trimmed != "" {
+				methodMap[trimmed] = true
+			}
+		}
+	}
+
+	// Parse exclude method filter (comma-separated list)
+	excludeMethodMap := make(map[string]bool)
+	if excludeMethodFilter != "" {
+		methods := strings.Split(excludeMethodFilter, ",")
+		for _, method := range methods {
+			trimmed := strings.TrimSpace(strings.ToUpper(method))
+			if trimmed != "" {
+				excludeMethodMap[trimmed] = true
+			}
+		}
+	}
+
 	// Parse IP filter (comma-separated list)
 	ipMap := make(map[string]bool)
 	if ipFilter != "" {
@@ -237,6 +309,18 @@ func analyzeLog(path string, startTime, endTime time.Time, statusFilters []strin
 			trimmed := strings.TrimSpace(ip)
 			if trimmed != "" {
 				ipMap[trimmed] = true
+			}
+		}
+	}
+
+	// Parse exclude IP filter (comma-separated list)
+	excludeIPMap := make(map[string]bool)
+	if excludeIPFilter != "" {
+		ips := strings.Split(excludeIPFilter, ",")
+		for _, ip := range ips {
+			trimmed := strings.TrimSpace(ip)
+			if trimmed != "" {
+				excludeIPMap[trimmed] = true
 			}
 		}
 	}
@@ -275,17 +359,30 @@ func analyzeLog(path string, startTime, endTime time.Time, statusFilters []strin
 			}
 		}
 
-		// Apply bot filter (exact match on detected bot name)
-		if botFilter != "" {
+		// Apply bot filter (include or exclude mode)
+		if len(botMap) > 0 || len(excludeBotMap) > 0 {
 			detectedBot := detectBot(entry.UserAgent)
-			if detectedBot != botFilter {
+
+			// Include mode: skip if bot doesn't match
+			if len(botMap) > 0 && !botMap[detectedBot] {
+				continue
+			}
+
+			// Exclude mode: skip if bot matches
+			if len(excludeBotMap) > 0 && excludeBotMap[detectedBot] {
 				continue
 			}
 		}
 
-		// Apply user-agent filter (exact match)
-		if uaFilter != "" {
-			if entry.UserAgent != uaFilter {
+		// Apply user-agent filter (include or exclude mode)
+		if len(uaMap) > 0 || len(excludeUAMap) > 0 {
+			// Include mode: skip if user-agent doesn't match
+			if len(uaMap) > 0 && !uaMap[entry.UserAgent] {
+				continue
+			}
+
+			// Exclude mode: skip if user-agent matches
+			if len(excludeUAMap) > 0 && excludeUAMap[entry.UserAgent] {
 				continue
 			}
 		}
@@ -297,16 +394,30 @@ func analyzeLog(path string, startTime, endTime time.Time, statusFilters []strin
 			}
 		}
 
-		// Apply method filter (exact match, case-insensitive)
-		if methodFilter != "" {
-			if !strings.EqualFold(entry.Method, methodFilter) {
+		// Apply method filter (include or exclude mode, case-insensitive)
+		if len(methodMap) > 0 || len(excludeMethodMap) > 0 {
+			upperMethod := strings.ToUpper(entry.Method)
+
+			// Include mode: skip if method doesn't match
+			if len(methodMap) > 0 && !methodMap[upperMethod] {
+				continue
+			}
+
+			// Exclude mode: skip if method matches
+			if len(excludeMethodMap) > 0 && excludeMethodMap[upperMethod] {
 				continue
 			}
 		}
 
-		// Apply IP filter (exact match)
-		if len(ipMap) > 0 {
-			if !ipMap[entry.IP] {
+		// Apply IP filter (include or exclude mode)
+		if len(ipMap) > 0 || len(excludeIPMap) > 0 {
+			// Include mode: skip if IP doesn't match
+			if len(ipMap) > 0 && !ipMap[entry.IP] {
+				continue
+			}
+
+			// Exclude mode: skip if IP matches
+			if len(excludeIPMap) > 0 && excludeIPMap[entry.IP] {
 				continue
 			}
 		}
@@ -428,8 +539,6 @@ func detectOS(ua string) string {
 }
 
 // detectBot identifies the specific bot name from a User-Agent string.
-// It recognizes 40+ known bots including Googlebot, YandexBot, Bingbot, etc.
-// Returns the bot name or "Other" if not recognized. Logs unknown bots in debug mode (DEBUG=1).
 func detectBot(ua string) string {
 	known := []string{
 		"Googlebot",
@@ -469,6 +578,12 @@ func detectBot(ua string) string {
 		"SERankingBacklinksBot",
 		"IABot",
 		"trendictionbot",
+		"AwarioBot",
+		"ShellBot",
+		"SurdotlyBot",
+		"fluid",
+		"YandexUserproxy",
+		"YandoriRSSBot",
 	}
 	for _, k := range known {
 		if strings.Contains(ua, k) {
@@ -876,11 +991,15 @@ func main() {
 	excludeStatus := flag.String("exclude-status", "", "Exclude these status code(s) - comma-separated, supports ranges (e.g., \"301,3xx\")")
 
 	// Global filters (apply to all sections and statistics)
-	filterBot := flag.String("bot", "", "Filter by bot name (exact match)")
-	filterUserAgent := flag.String("user-agent", "", "Filter by user-agent (exact match)")
+	filterBot := flag.String("bot", "", "Filter by bot name(s) - comma-separated for multiple (exact match, e.g., \"Googlebot\" or \"Googlebot,YandexBot\")")
+	excludeBot := flag.String("exclude-bot", "", "Exclude bot name(s) - comma-separated for multiple (exact match, e.g., \"Googlebot,YandexBot\")")
+	filterUserAgent := flag.String("user-agent", "", "Filter by user-agent(s) - comma-separated for multiple (exact match)")
+	excludeUserAgent := flag.String("exclude-user-agent", "", "Exclude user-agent(s) - comma-separated for multiple (exact match)")
 	filterDomain := flag.String("domain", "", "Filter by domain (exact match)")
-	filterMethod := flag.String("method", "", "Filter by HTTP method (exact match, e.g., \"GET\", \"POST\")")
+	filterMethod := flag.String("method", "", "Filter by HTTP method(s) - comma-separated for multiple (exact match, e.g., \"GET\" or \"GET,POST\")")
+	excludeMethod := flag.String("exclude-method", "", "Exclude HTTP method(s) - comma-separated for multiple (exact match, e.g., \"HEAD,OPTIONS\")")
 	filterIP := flag.String("ip", "", "Filter by IP address(es) - comma-separated for multiple (exact match, e.g., \"192.168.1.1\" or \"192.168.1.1,10.0.0.1\")")
+	excludeIP := flag.String("exclude-ip", "", "Exclude IP address(es) - comma-separated for multiple (exact match, e.g., \"127.0.0.1,::1\")")
 
 	flag.Parse()
 
@@ -930,35 +1049,41 @@ func main() {
 		fmt.Println("  -suspicious Suspicious IPs - IPs with high error rates")
 		fmt.Println("  -requests   Requests - Detailed log entries (all fields)")
 		fmt.Println("\nFilters (apply to all sections and statistics):")
-		fmt.Println("  -from           Filter logs from this time (format: 08/Dec/2025:08:30:00)")
-		fmt.Println("  -to             Filter logs until this time (format: 08/Dec/2025:18:30:00)")
-		fmt.Println("  -status-code    Include only these status codes (comma-separated, ranges: 2xx,3xx,4xx,5xx)")
-		fmt.Println("  -exclude-status Exclude these status codes (comma-separated, ranges: 2xx,3xx,4xx,5xx)")
-		fmt.Println("  -bot            Filter by bot name - exact match (e.g., \"Googlebot\")")
-		fmt.Println("  -user-agent     Filter by user-agent string - exact match")
-		fmt.Println("  -domain         Filter by domain - exact match (e.g., \"www.example.com\")")
-		fmt.Println("  -method         Filter by HTTP method - exact match (e.g., \"GET\", \"POST\")")
-		fmt.Println("  -ip             Filter by IP address(es) - comma-separated for multiple, exact match (e.g., \"192.168.1.1\" or \"192.168.1.1,10.0.0.1\")")
+		fmt.Println("  -from             Filter logs from this time (format: 08/Dec/2025:08:30:00)")
+		fmt.Println("  -to               Filter logs until this time (format: 08/Dec/2025:18:30:00)")
+		fmt.Println("  -status-code      Include only these status codes (comma-separated, ranges: 2xx,3xx,4xx,5xx)")
+		fmt.Println("  -exclude-status   Exclude these status codes (comma-separated, ranges: 2xx,3xx,4xx,5xx)")
+		fmt.Println("  -bot              Filter by bot name(s) - comma-separated for multiple (e.g., \"Googlebot,YandexBot\")")
+		fmt.Println("  -exclude-bot      Exclude bot name(s) - comma-separated for multiple (e.g., \"Googlebot,YandexBot\")")
+		fmt.Println("  -user-agent       Filter by user-agent(s) - comma-separated for multiple (exact match)")
+		fmt.Println("  -exclude-user-agent Exclude user-agent(s) - comma-separated for multiple (exact match)")
+		fmt.Println("  -domain           Filter by domain - exact match (e.g., \"www.example.com\")")
+		fmt.Println("  -method           Filter by HTTP method(s) - comma-separated for multiple (e.g., \"GET,POST\")")
+		fmt.Println("  -exclude-method   Exclude HTTP method(s) - comma-separated for multiple (e.g., \"HEAD,OPTIONS\")")
+		fmt.Println("  -ip               Filter by IP address(es) - comma-separated for multiple (e.g., \"192.168.1.1,10.0.0.1\")")
+		fmt.Println("  -exclude-ip       Exclude IP address(es) - comma-separated for multiple (e.g., \"127.0.0.1,::1\")")
 		fmt.Println("\nOther flags:")
 		fmt.Printf("  -limit int      Override default limits (IPs:%d, Status:%d, Paths:%d, Bots:%d)\n",
 			DefaultLimitIPs, DefaultLimitStatus, DefaultLimitPaths, DefaultLimitBots)
 		fmt.Println("\nExamples:")
 		fmt.Println("  loginspector access.log              # Show all sections")
+		fmt.Println("  loginspector -requests -from=\"08/Dec/2025:08:00:00\" -to=\"08/Dec/2025:18:00:00\" access.log # Show detailed requests in time range")
 		fmt.Println("  loginspector -bots access.log        # Show only bots")
 		fmt.Println("  loginspector -bots -ips access.log   # Show only bots and IPs")
 		fmt.Println("  loginspector -bots -limit=50 access.log")
-		fmt.Println("  loginspector -from=\"08/Dec/2025:08:00:00\" -to=\"08/Dec/2025:18:00:00\" access.log")
 		fmt.Println("  loginspector -from=\"07/Dec/2025:12:00:00\" access.log  # From specific time onwards")
 		fmt.Println("  loginspector -status-code=\"200\" access.log             # Only 200 OK responses")
 		fmt.Println("  loginspector -status-code=\"4xx,5xx\" access.log        # Only errors")
 		fmt.Println("  loginspector -exclude-status=\"2xx\" access.log         # All except success")
 		fmt.Println("  loginspector -from=\"...\" -status-code=\"5xx\" access.log  # Combine filters")
 		fmt.Println("  loginspector -bot=\"Googlebot\" access.log                 # Only Googlebot traffic")
-		fmt.Println("  loginspector -domain=\"api.example.com\" access.log        # Only specific domain")
-		fmt.Println("  loginspector -bot=\"Googlebot\" -status-code=\"404\" access.log  # Googlebot 404s")
-		fmt.Println("  loginspector -ip=\"192.168.1.1\" access.log                     # Only specific IP")
-		fmt.Println("  loginspector -ip=\"192.168.1.1,10.0.0.1\" access.log            # Multiple IPs")
-		fmt.Println("  loginspector -ip=\"66.249.69.105\" -status-code=\"404\" access.log  # IP with 404s")
+		fmt.Println("  loginspector -bot=\"Googlebot,YandexBot\" access.log       # Multiple bots")
+		fmt.Println("  loginspector -exclude-bot=\"Googlebot,YandexBot\" access.log  # Exclude specific bots")
+		fmt.Println("  loginspector -method=\"GET,POST\" access.log               # Only GET and POST")
+		fmt.Println("  loginspector -exclude-method=\"HEAD,OPTIONS\" access.log   # Exclude HEAD and OPTIONS")
+		fmt.Println("  loginspector -ip=\"192.168.1.1,10.0.0.1\" access.log       # Multiple IPs")
+		fmt.Println("  loginspector -exclude-ip=\"127.0.0.1\" access.log          # Exclude localhost")
+		fmt.Println("  loginspector -bot=\"Googlebot,YandexBot\" -exclude-ip=\"127.0.0.1\" -method=\"GET,POST\" access.log")
 		return
 	}
 
@@ -989,7 +1114,7 @@ func main() {
 	var statusFilters []string
 	var excludeStatusMode bool
 
-	// Check mutual exclusivity
+	// Check mutual exclusivity for status codes
 	if *statusCode != "" && *excludeStatus != "" {
 		log.Fatalf("Error: -status-code and -exclude-status cannot be used together")
 	}
@@ -1008,7 +1133,21 @@ func main() {
 		excludeStatusMode = true
 	}
 
-	a, err := analyzeLog(flag.Arg(0), startTime, endTime, statusFilters, excludeStatusMode, *filterBot, *filterUserAgent, *filterDomain, *filterMethod, *filterIP)
+	// Check mutual exclusivity for other filters
+	if *filterBot != "" && *excludeBot != "" {
+		log.Fatalf("Error: -bot and -exclude-bot cannot be used together")
+	}
+	if *filterMethod != "" && *excludeMethod != "" {
+		log.Fatalf("Error: -method and -exclude-method cannot be used together")
+	}
+	if *filterIP != "" && *excludeIP != "" {
+		log.Fatalf("Error: -ip and -exclude-ip cannot be used together")
+	}
+	if *filterUserAgent != "" && *excludeUserAgent != "" {
+		log.Fatalf("Error: -user-agent and -exclude-user-agent cannot be used together")
+	}
+
+	a, err := analyzeLog(flag.Arg(0), startTime, endTime, statusFilters, excludeStatusMode, *filterBot, *excludeBot, *filterUserAgent, *excludeUserAgent, *filterDomain, *filterMethod, *excludeMethod, *filterIP, *excludeIP)
 	if err != nil {
 		log.Fatalf("Error analyzing log: %v", err)
 	}
@@ -1071,7 +1210,7 @@ func main() {
 	}
 
 	if *showTime {
-		printTimeDistribution("Time Distribution", a.TimeDistribution)
+		printTimeDistribution("Time Distribution By Hours", a.TimeDistribution)
 	}
 
 	if *showBots {
