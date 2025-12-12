@@ -198,7 +198,7 @@ Currently supports custom log format. Example line:
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
-║                      🔍  LogInspector  v0.3.0                        ║
+║                      🔍  LogInspector  v0.3.1                        ║
 ║                 Fast Web Server Access Log Analyzer                  ║
 ╠══════════════════════════════════════════════════════════════════════╣
 ║  Total requests: 60133            Bot types: 30                      ║
@@ -326,7 +326,7 @@ $ loginspector -requests -status-code="404" -limit=5 access.log
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
-║                      🔍  LogInspector  v0.3.0                        ║
+║                      🔍  LogInspector  v0.3.1                        ║
 ║                 Fast Web Server Access Log Analyzer                  ║
 ╠══════════════════════════════════════════════════════════════════════╣
 ║  Total requests: 1323             Bot types: 7                       ║
