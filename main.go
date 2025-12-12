@@ -10,10 +10,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-const version = "v0.3.0"
+const version = "v0.3.1"
 
 const (
 	DefaultLimitIPs           = 10
@@ -24,6 +25,46 @@ const (
 	ScannerBufferSize         = 1024 * 1024      // 1MB initial buffer
 	ScannerMaxBufferSize      = 10 * 1024 * 1024 // 10MB max line size
 	HoursInDay                = 24
+)
+
+// Bot detection constants
+const (
+	BotUnknown = "UnknownBot"
+)
+
+// Browser name constants
+const (
+	BrowserEdge             = "Edge"
+	BrowserOpera            = "Opera"
+	BrowserFirefox          = "Firefox"
+	BrowserChrome           = "Chrome"
+	BrowserSafari           = "Safari"
+	BrowserInternetExplorer = "Internet Explorer"
+	BrowserOther            = "Other"
+)
+
+// Device type constants
+const (
+	DeviceTablet  = "Tablet"
+	DeviceMobile  = "Mobile"
+	DeviceDesktop = "Desktop"
+)
+
+// Operating system constants
+const (
+	OSWindows = "Windows"
+	OSAndroid = "Android"
+	OSiOS     = "iOS"
+	OSmacOS   = "macOS"
+	OSLinux   = "Linux"
+	OSOther   = "Other"
+)
+
+// HTTP status code constants
+const (
+	StatusForbidden = "403"
+	StatusPrefix4xx = "4"
+	StatusPrefix5xx = "5"
 )
 
 type LogEntry struct {
@@ -60,6 +101,12 @@ type Analysis struct {
 }
 
 var logRegex *regexp.Regexp
+
+// Bot detection cache to avoid repeated string matching
+var (
+	botCache      = make(map[string]string)
+	botCacheMutex sync.RWMutex
+)
 
 // init compiles the log parsing regex at startup and fails fast if regex is invalid.
 func init() {
@@ -442,13 +489,13 @@ func analyzeLog(path string, startTime, endTime time.Time, statusFilters []strin
 		}
 
 		// Errors
-		if strings.HasPrefix(entry.StatusCode, "4") || strings.HasPrefix(entry.StatusCode, "5") {
+		if strings.HasPrefix(entry.StatusCode, StatusPrefix4xx) || strings.HasPrefix(entry.StatusCode, StatusPrefix5xx) {
 			a.Errors = append(a.Errors, *entry)
 			a.ErrorsByIP[entry.IP]++
 		}
 
 		// Track 403 Forbidden specifically
-		if entry.StatusCode == "403" {
+		if entry.StatusCode == StatusForbidden {
 			a.ForbiddenByIP[entry.IP]++
 		}
 
@@ -485,113 +532,138 @@ func isBot(ua string) bool {
 // Returns browser name like "Chrome", "Firefox", "Safari", "Edge", "Opera", "IE", or "Other".
 func detectBrowser(ua string) string {
 	if strings.Contains(ua, "Edg/") || strings.Contains(ua, "Edge/") {
-		return "Edge"
+		return BrowserEdge
 	}
 	if strings.Contains(ua, "OPR/") || strings.Contains(ua, "Opera/") {
-		return "Opera"
+		return BrowserOpera
 	}
 	if strings.Contains(ua, "Firefox/") {
-		return "Firefox"
+		return BrowserFirefox
 	}
 	if strings.Contains(ua, "Chrome/") && !strings.Contains(ua, "Edg") {
-		return "Chrome"
+		return BrowserChrome
 	}
 	if strings.Contains(ua, "Safari/") && !strings.Contains(ua, "Chrome") && !strings.Contains(ua, "Chromium") {
-		return "Safari"
+		return BrowserSafari
 	}
 	if strings.Contains(ua, "MSIE") || strings.Contains(ua, "Trident/") {
-		return "Internet Explorer"
+		return BrowserInternetExplorer
 	}
-	return "Other"
+	return BrowserOther
 }
 
 // detectDevice determines the device type from a User-Agent string.
 // Returns "Mobile", "Tablet", or "Desktop".
 func detectDevice(ua string) string {
 	if strings.Contains(ua, "Tablet") || strings.Contains(ua, "iPad") {
-		return "Tablet"
+		return DeviceTablet
 	}
 	if strings.Contains(ua, "Mobile") || (strings.Contains(ua, "Android") && !strings.Contains(ua, "Tablet")) {
-		return "Mobile"
+		return DeviceMobile
 	}
-	return "Desktop"
+	return DeviceDesktop
 }
 
 // detectOS identifies the operating system from a User-Agent string.
 // Returns OS name like "Windows", "macOS", "Linux", "Android", "iOS", or "Other".
 func detectOS(ua string) string {
 	if strings.Contains(ua, "Windows") {
-		return "Windows"
+		return OSWindows
 	}
 	if strings.Contains(ua, "Android") {
-		return "Android"
+		return OSAndroid
 	}
 	if strings.Contains(ua, "iPhone") || strings.Contains(ua, "iPad") || strings.Contains(ua, "iOS") {
-		return "iOS"
+		return OSiOS
 	}
 	if strings.Contains(ua, "Macintosh") || strings.Contains(ua, "Mac OS X") {
-		return "macOS"
+		return OSmacOS
 	}
 	if strings.Contains(ua, "Linux") && !strings.Contains(ua, "Android") {
-		return "Linux"
+		return OSLinux
 	}
-	return "Other"
+	return OSOther
 }
 
 // detectBot identifies the specific bot name from a User-Agent string.
+// Uses a cache to avoid repeated string matching for performance.
 func detectBot(ua string) string {
+	// Check cache first (read lock)
+	botCacheMutex.RLock()
+	if result, exists := botCache[ua]; exists {
+		botCacheMutex.RUnlock()
+		return result
+	}
+	botCacheMutex.RUnlock()
+
+	// Not in cache, perform detection
 	known := []string{
+		// Useful
 		"Googlebot",
+		"AdsBot-Google-Mobile",
 		"Applebot",
 		"bingbot",
-		"YandexBot",
 		"DuckDuckBot",
-		"VKRobotRB",
-		"AhrefsBot",
-		"SemrushBot",
-		"Baiduspider",
-		"keys-so-bot",
-		"PetalBot",
-		"Bytespider",
-		"TikTokSpider",
-		"PerplexityBot",
+		"YandexBot",
 		"YandexMetrika",
 		"YandexAccessibilityBot",
 		"YaDirectFetcher",
 		"YandexImages",
 		"YandexRenderResourcesBot",
 		"YandexMobileBot",
-		"coccocbot",
-		"Cotoyogi",
-		"GetIntent",
+		"YandexUserproxy",
+		"VKRobotRB",
 		"ChatGPT-User",
 		"OAI-SearchBot",
 		"Pinterestbot",
-		"Sogou",
-		"meta-externalagent",
-		"AliyunSecBot",
-		"HaloBot",
-		"ShapBot",
 		"Twitterbot",
 		"TelegramBot",
 		"Facebot",
+		"Konturbot",
+		"ev-crawler",
+
+		// Neutral
+		"AhrefsBot",
+		"SemrushBot",
 		"SERankingBacklinksBot",
+		"Sogou",
+		"PetalBot",
+		"Bytespider",
+		"TikTokSpider",
+		"GetIntent",
 		"IABot",
-		"trendictionbot",
+		"coccocbot",
+		"Cotoyogi",
 		"AwarioBot",
+		"PerplexityBot",
+		"meta-externalagent",
+		"trendictionbot",
+		"keys-so-bot",
+		"fluid",
+		"YandoriRSSBot",
+
+		// Potentially harmful
+		"AliyunSecBot",
+		"HaloBot",
+		"ShapBot",
 		"ShellBot",
 		"SurdotlyBot",
-		"fluid",
-		"YandexUserproxy",
-		"YandoriRSSBot",
 	}
+
+	result := BotUnknown
 	for _, k := range known {
 		if strings.Contains(ua, k) {
-			return k
+			result = k
+			break
 		}
 	}
 
-	return "UnknownBot"
+	// Store in cache (write lock)
+	botCacheMutex.Lock()
+	botCache[ua] = result
+	botCacheMutex.Unlock()
+
+	return result
 }
 
 type PrintOptions struct {
@@ -647,9 +719,9 @@ func printRequests(entries []LogEntry, limit int) {
 	}
 
 	// Print table header
-	fmt.Printf("%-16s | %-5s | %-6s | %-15s | %-20s | %-6s | %-30s | %-20s\n",
+	fmt.Printf("%-16s | %-5s | %-6s | %-15s | %-20s | %-6s | %-50s | %-20s\n",
 		"Date/Time", "Exec", "Status", "IP", "Domain", "Method", "Path", "User-Agent")
-	fmt.Println(strings.Repeat("─", 145))
+	fmt.Println(strings.Repeat("─", 160))
 
 	// Print entries
 	for _, entry := range entriesToShow {
@@ -661,14 +733,14 @@ func printRequests(entries []LogEntry, limit int) {
 
 		// Truncate domain if too long
 		domain := entry.Domain
-		if len(domain) > 20 {
-			domain = domain[:17] + "..."
+		if len(domain) > 40 {
+			domain = domain[:37] + "..."
 		}
 
 		// Truncate path if too long
 		path := entry.Path
-		if len(path) > 30 {
-			path = path[:27] + "..."
+		if len(path) > 50 {
+			path = path[:47] + "..."
 		}
 
 		// Detect browser/bot from user agent
@@ -688,17 +760,17 @@ func printRequests(entries []LogEntry, limit int) {
 				} else {
 					// Show first 20 chars of UA
 					userAgent = entry.UserAgent
-					if len(userAgent) > 20 {
-						userAgent = userAgent[:17] + "..."
+					if len(userAgent) > 40 {
+						userAgent = userAgent[:37] + "..."
 					}
 				}
 			}
 		}
-		if len(userAgent) > 20 {
-			userAgent = userAgent[:17] + "..."
+		if len(userAgent) > 40 {
+			userAgent = userAgent[:37] + "..."
 		}
 
-		fmt.Printf("%-16s | %-5s | %-6s | %-15s | %-20s | %-6s | %-30s | %-20s\n",
+		fmt.Printf("%-16s | %-5s | %-6s | %-15s | %-20s | %-6s | %-50s | %-20s\n",
 			dateTime, execTime, entry.StatusCode, entry.IP, domain,
 			entry.Method, path, userAgent)
 	}
@@ -912,7 +984,6 @@ func printSuspiciousIPs(errorsByIP, forbiddenByIP, byIP map[string]int, botInfo 
 	}
 }
 
-// printBanner displays the application banner with the given version.
 // printBannerWithStats displays a unified banner with statistics in one elegant table.
 // Combines the application header and summary statistics with a separator.
 func printBannerWithStats(version string, a *Analysis) {
@@ -967,8 +1038,7 @@ func printBannerWithStats(version string, a *Analysis) {
 	fmt.Println("╚" + strings.Repeat("═", width) + "╝")
 }
 
-// main is the entry point of the application.
-// It parses command-line flags, analyzes the log file, and displays requested statistics.
+// main parses command-line flags, analyzes the log file, and displays requested statistics.
 func main() {
 	// Section flags
 	showIPs := flag.Bool("ips", false, "Top IPs - IP addresses with most requests (bots are marked)")
