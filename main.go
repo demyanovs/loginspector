@@ -719,9 +719,9 @@ func printRequests(entries []LogEntry, limit int) {
 	}
 
 	// Print table header
-	fmt.Printf("%-16s | %-5s | %-6s | %-15s | %-20s | %-6s | %-30s | %-20s\n",
+	fmt.Printf("%-16s | %-5s | %-6s | %-15s | %-20s | %-6s | %-50s | %-20s\n",
 		"Date/Time", "Exec", "Status", "IP", "Domain", "Method", "Path", "User-Agent")
-	fmt.Println(strings.Repeat("─", 145))
+	fmt.Println(strings.Repeat("─", 160))
 
 	// Print entries
 	for _, entry := range entriesToShow {
@@ -733,14 +733,14 @@ func printRequests(entries []LogEntry, limit int) {
 
 		// Truncate domain if too long
 		domain := entry.Domain
-		if len(domain) > 20 {
-			domain = domain[:17] + "..."
+		if len(domain) > 40 {
+			domain = domain[:37] + "..."
 		}
 
 		// Truncate path if too long
 		path := entry.Path
-		if len(path) > 30 {
-			path = path[:27] + "..."
+		if len(path) > 50 {
+			path = path[:47] + "..."
 		}
 
 		// Detect browser/bot from user agent
@@ -760,17 +760,17 @@ func printRequests(entries []LogEntry, limit int) {
 				} else {
 					// Show first 20 chars of UA
 					userAgent = entry.UserAgent
-					if len(userAgent) > 20 {
-						userAgent = userAgent[:17] + "..."
+					if len(userAgent) > 40 {
+						userAgent = userAgent[:37] + "..."
 					}
 				}
 			}
 		}
-		if len(userAgent) > 20 {
-			userAgent = userAgent[:17] + "..."
+		if len(userAgent) > 40 {
+			userAgent = userAgent[:37] + "..."
 		}
 
-		fmt.Printf("%-16s | %-5s | %-6s | %-15s | %-20s | %-6s | %-30s | %-20s\n",
+		fmt.Printf("%-16s | %-5s | %-6s | %-15s | %-20s | %-6s | %-50s | %-20s\n",
 			dateTime, execTime, entry.StatusCode, entry.IP, domain,
 			entry.Method, path, userAgent)
 	}
